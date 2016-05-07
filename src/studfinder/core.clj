@@ -2,11 +2,13 @@
   (:require [clj-http
              [client :as http]
              [cookies :as cookies]]
+            [clojure.string :as str]
             [environ.core :refer [env]]
             [hickory
+             [convert :as convert]
              [core :as hickory]
-             [select :as s]]
-            [clojure.string :as str]))
+             [select :as s]
+             [zip :as hzip]]))
 
 (def urls
   {:login (constantly "https://www.bricklink.com/login.asp?logInTo=my.asp")
@@ -82,35 +84,95 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Lot list
 
+(defn parse-price
+  [s]
+  (try
+    (if (= s "None")
+      0
+      (let [[dollaz cents] (str/split s #"\.")
+            cents (apply str (take 2 cents))]
+        (+ (* (Integer/parseInt dollaz) 100)
+           (Integer/parseInt cents))))
+    (catch Exception e
+      (throw (ex-info "Failed to parse price" {:s s :cause e})))))
+
 (defn parse-min-buy
   [s]
-  (when s
-    (let [min (str/replace s #"Loc: [^,]+, Min Buy: (~US \$)?" "")
-          min (try (Double/parseDouble min) (catch Exception e nil))]
-      min)))
+  (try
+    (when s
+      (-> s
+          (str/replace #"Loc: [^,]+, Min Buy: (~US \$)?" "")
+          parse-price))
+    (catch Exception e
+      (if (instance? clojure.lang.ExceptionInfo e)
+        (throw e)
+        (throw (ex-info "Failed to parse minimum buy amount" {:s s :cause e}))))))
+
+(defn parse-rep
+  [s]
+  (try
+    (-> s
+        (str/replace #"[()]" "")
+        Integer/parseInt)
+    (catch Exception e
+      (throw (ex-info "Failed to parse reputation" {:s s :cause e})))))
+
+(defn parse-unit-price
+  [s]
+  (try
+    (when s
+      (-> s
+          (str/replace #"US \$" "")
+          (str/replace #"[()]" "")
+          parse-price))
+    (catch Exception e
+      (if (instance? clojure.lang.ExceptionInfo e)
+        (throw e)
+        (throw (ex-info "Failed to parse unit-price" {:s s :cause e}))))))
 
 (defn single-content
   [e]
   (-> e first :content first))
 
+(defn has-about-me?
+  [available-in]
+  (when-let [url (-> (s/select (s/and (s/tag :a) (s/nth-child 5)) available-in)
+                     first
+                     :attrs
+                     :href)]
+    (.startsWith url "http://www.bricklink.com/aboutMe.asp")))
+
 (defn extract-lot
   [lot-row]
-  (let [description (first (s/select (s/and (s/tag :td) (s/nth-child 3)) lot-row))
-        store       (first (s/select (s/and (s/tag :td) (s/nth-child 4)) lot-row))
-        shop        (first (s/select (s/child (s/tag :font) (s/and (s/tag :a) (s/nth-child 2))) store))]
-    {:name    (-> (s/select s/first-child description)
-                  single-content)
-     :min-buy (-> (s/select (s/child (s/tag :font) (s/tag :font)) description)
-                  single-content
-                  parse-min-buy)
-     :shop-name (-> shop
-                    :content
-                    first)
-     :shop-url (str "http://www.bricklink.com" (get-in shop [:attrs :href]))}))
+  (let [description  (first (s/select (s/child (s/and (s/tag :td) (s/nth-child 3))) lot-row))
+        available-in (first (s/select (s/child (s/and (s/tag :td) (s/nth-child 4)) (s/tag :font)) lot-row))
+        offset       (if (has-about-me? available-in) 1 0)
+        shop         (s/select (s/and (s/tag :a) (s/nth-child 2)) available-in)
+        rep          (s/select (s/and (s/tag :a) (s/nth-child 3)) available-in)
+        qty          (s/select (s/and (s/tag :b) (s/nth-child (+ 6 offset))) available-in)
+        price        (s/select (s/and (s/tag :font) (s/nth-child (+ 10 offset))) available-in)]
+    {:name       (-> (s/select s/first-child description)
+                     single-content)
+     :min-buy    (-> (s/select (s/child (s/tag :font) (s/tag :font)) description)
+                     single-content
+                     parse-min-buy)
+     :shop-name  (-> shop
+                     single-content)
+     :shop-url   (str "http://www.bricklink.com" (get-in (first shop) [:attrs :href]))
+     :shop-rep   (-> rep
+                     single-content
+                     parse-rep)
+     :quantity   (-> qty
+                     single-content
+                     Integer/parseInt)
+     :unit-price (-> price
+                     single-content
+                     parse-unit-price)}))
 
 (defn lots
   [lot-list-page]
   (let [rows (s/select (s/descendant (s/and (s/tag :table) (s/class "tb-main-content"))
+                                     (s/tag :table)
                                      (s/tag :table)
                                      (s/and (s/tag :tr) (s/class "tm")))
                        lot-list-page)]
