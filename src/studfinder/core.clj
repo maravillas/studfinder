@@ -8,7 +8,8 @@
              [convert :as convert]
              [core :as hickory]
              [select :as s]
-             [zip :as hzip]]))
+             [zip :as hzip]])
+  (:import java.util.Date))
 
 (def urls
   {:login          (constantly "https://www.bricklink.com/login.asp?logInTo=my.asp")
@@ -18,10 +19,23 @@
 (def headers
   {"User-Agent" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.86 Safari/537.36"})
 
+(def min-request-delay 1000)
+
 (defonce cookie-store (cookies/cookie-store))
+
+(defonce last-request (atom (.getTime (Date.))))
+
+(defn delay-fetch
+  []
+  (let [to-wait (max 0 (- min-request-delay (- (.getTime (Date.)) @last-request)))]
+    (when-not (zero? to-wait)
+      (println "Waiting" to-wait "ms")
+      (Thread/sleep to-wait))))
 
 (defn fetch
   [url]
+  (delay-fetch)
+  (reset! last-request (.getTime (Date.)))
   (println "Requesting" url)
   (-> (http/get url {:cookie-store cookie-store})
       :body
@@ -81,6 +95,7 @@
 (defn lot-list-urls
   "Lists all \"view all lots\" URLs on all of a wanted list's detail pages."
   [wanted-list-id]
+  (println "--- Collecting lots-for-parts URLs for wanted list ---")
   (let [first-page (fetch ((:wanted-detail urls) wanted-list-id))
         other-page-urls (wanted-detail-page-urls first-page)
         other-pages (map (comp fetch prefix-url) other-page-urls)]
@@ -122,6 +137,15 @@
     (catch Exception e
       (throw (ex-info "Failed to parse reputation" {:s s :cause e})))))
 
+(defn parse-quantity
+  [s]
+  (try
+    (-> s
+        (str/replace #"," "")
+        Integer/parseInt)
+    (catch Exception e
+      (throw (ex-info "Failed to parse quantity" {:s s :cause e})))))
+
 (defn parse-unit-price
   [s]
   (try
@@ -143,23 +167,21 @@
   [e]
   (-> e first :content first))
 
-(defn has-about-me?
-  [available-in]
-  (when-let [url (-> (s/select (s/and (s/tag :a) (s/nth-child 5)) available-in)
-                     first
-                     :attrs
-                     :href)]
-    (.startsWith url "http://www.bricklink.com/aboutMe.asp")))
+(defn find-by-label
+  [l label]
+  (cond (re-find label (first l)) (first (rest l))
+        (empty? l) nil
+        :else (recur (rest l) label)))
 
 (defn extract-lot
   [lot-row]
   (let [description  (first (s/select (s/child (s/and (s/tag :td) (s/nth-child 3))) lot-row))
         available-in (first (s/select (s/child (s/and (s/tag :td) (s/nth-child 4)) (s/tag :font)) lot-row))
-        offset       (if (has-about-me? available-in) 1 0)
         shop         (s/select (s/and (s/tag :a) (s/nth-child 2)) available-in)
         rep          (s/select (s/and (s/tag :a) (s/nth-child 3)) available-in)
-        qty          (s/select (s/and (s/tag :b) (s/nth-child (+ 6 offset))) available-in)
-        price        (s/select (s/and (s/tag :font) (s/nth-child (+ 10 offset))) available-in)]
+        texts        (s/select (s/not (s/node-type :element)) available-in)
+        qty          (find-by-label texts #"Qty")
+        price        (find-by-label texts #"Each")]
     {:name          (-> (s/select s/first-child description)
                         single-content)
      :min-buy       (-> (s/select (s/child (s/tag :font) (s/tag :font)) description)
@@ -177,10 +199,8 @@
                         single-content
                         parse-rep)
      :quantity      (-> qty
-                        single-content
-                        Integer/parseInt)
+                        parse-quantity)
      :unit-price    (-> price
-                        single-content
                         parse-unit-price)}))
 
 (defn lots
@@ -210,17 +230,16 @@
 
 (defn lot-list-lots
   [first-page]
+  (println "--- Collecting lots for a part ---")
   (let [lot-list-page-urls (lot-list-page-urls first-page)
         lot-list-pages (map fetch lot-list-page-urls)]
     (mapcat lots (conj lot-list-pages first-page))))
 
 (defn wanted-list-lots
   [wanted-list-id]
-  (let [lot-list-first-pages (map #(fetch %) (take 1 (lot-list-urls wanted-list-id)))
-        
-
-
-        ]))
+  (let [lot-list-first-pages (map #(fetch %) (take 2 (lot-list-urls wanted-list-id)))
+        lots (map lot-list-lots lot-list-first-pages)]
+    lots))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Store terms
