@@ -20,7 +20,7 @@
 
 (defonce cookie-store (cookies/cookie-store))
 
-(defn parse-url
+(defn fetch
   [url]
   (println "Requesting" url)
   (-> (http/get url {:cookie-store cookie-store})
@@ -81,9 +81,9 @@
 (defn lot-list-urls
   "Lists all \"view all lots\" URLs on all of a wanted list's detail pages."
   [wanted-list-id]
-  (let [first-page (parse-url ((:wanted-detail urls) wanted-list-id))
+  (let [first-page (fetch ((:wanted-detail urls) wanted-list-id))
         other-page-urls (wanted-detail-page-urls first-page)
-        other-pages (map (comp parse-url prefix-url) other-page-urls)]
+        other-pages (map (comp fetch prefix-url) other-page-urls)]
     (mapcat wanted-detail-lot-urls (conj other-pages first-page))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -211,12 +211,12 @@
 (defn lot-list-lots
   [first-page]
   (let [lot-list-page-urls (lot-list-page-urls first-page)
-        lot-list-pages (map parse-url lot-list-page-urls)]
+        lot-list-pages (map fetch lot-list-page-urls)]
     (mapcat lots (conj lot-list-pages first-page))))
 
 (defn wanted-list-lots
   [wanted-list-id]
-  (let [lot-list-first-pages (map #(parse-url %) (take 1 (lot-list-urls wanted-list-id)))
+  (let [lot-list-first-pages (map #(fetch %) (take 1 (lot-list-urls wanted-list-id)))
         
 
 
@@ -246,15 +246,15 @@
 
 (defn store-terms
   [store-username]
-  (let [framed-page (parse-url ((:store-page urls) store-username))
+  (let [framed-page (fetch ((:store-page urls) store-username))
         top-url     (-> (s/select (s/tag :frame) framed-page) first :attrs :src)
-        top-page    (parse-url (prefix-url top-url))
+        top-page    (fetch (prefix-url top-url))
         terms-url   (-> (s/select (s/and (s/tag :a)
                                          (s/has-descendant (s/find-in-text #"Store Terms")))
                                   top-page)
                         first
                         :attrs
                         :href)
-        terms-page  (parse-url (prefix-url terms-url))]
+        terms-page  (fetch (prefix-url terms-url))]
     {:store-terms     (terms-text terms-page)
      :shipping-policy (shipping-text terms-page)}))
