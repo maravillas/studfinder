@@ -11,8 +11,9 @@
              [zip :as hzip]]))
 
 (def urls
-  {:login (constantly "https://www.bricklink.com/login.asp?logInTo=my.asp")
-   :wanted-detail #(str "http://www.bricklink.com/wantedDetail.asp?catType=P&wantedMoreID=" %)})
+  {:login          (constantly "https://www.bricklink.com/login.asp?logInTo=my.asp")
+   :wanted-detail  #(str "http://www.bricklink.com/wantedDetail.asp?catType=P&wantedMoreID=" %)
+   :store-page     #(str "https://www.bricklink.com/store.asp?p=" %)})
 
 (def headers
   {"User-Agent" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.86 Safari/537.36"})
@@ -31,6 +32,10 @@
   (comp
    (map :attrs)
    (map :href)))
+
+(defn prefix-url
+  [s]
+  (str "http://www.bricklink.com" (if (.startsWith s "/") s (str "/" s))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Login
@@ -78,7 +83,7 @@
   [wanted-list-id]
   (let [first-page (parse-url ((:wanted-detail urls) wanted-list-id))
         other-page-urls (wanted-detail-page-urls first-page)
-        other-pages (map (comp parse-url #(str "http://www.bricklink.com/" %)) other-page-urls)]
+        other-pages (map (comp parse-url prefix-url) other-page-urls)]
     (mapcat wanted-detail-lot-urls (conj other-pages first-page))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -130,6 +135,10 @@
         (throw e)
         (throw (ex-info "Failed to parse unit-price" {:s s :cause e}))))))
 
+(defn parse-shop-username
+  [s]
+  (second (re-find #"p=([^&]+)" s)))
+
 (defn single-content
   [e]
   (-> e first :content first))
@@ -151,23 +160,28 @@
         rep          (s/select (s/and (s/tag :a) (s/nth-child 3)) available-in)
         qty          (s/select (s/and (s/tag :b) (s/nth-child (+ 6 offset))) available-in)
         price        (s/select (s/and (s/tag :font) (s/nth-child (+ 10 offset))) available-in)]
-    {:name       (-> (s/select s/first-child description)
-                     single-content)
-     :min-buy    (-> (s/select (s/child (s/tag :font) (s/tag :font)) description)
-                     single-content
-                     parse-min-buy)
-     :shop-name  (-> shop
-                     single-content)
-     :shop-url   (str "http://www.bricklink.com" (get-in (first shop) [:attrs :href]))
-     :shop-rep   (-> rep
-                     single-content
-                     parse-rep)
-     :quantity   (-> qty
-                     single-content
-                     Integer/parseInt)
-     :unit-price (-> price
-                     single-content
-                     parse-unit-price)}))
+    {:name          (-> (s/select s/first-child description)
+                        single-content)
+     :min-buy       (-> (s/select (s/child (s/tag :font) (s/tag :font)) description)
+                        single-content
+                        parse-min-buy)
+     :shop-username (-> shop
+                        first
+                        :attrs
+                        :href
+                        parse-shop-username)
+     :shop-name     (-> shop
+                        single-content)
+     :shop-url      (prefix-url (get-in (first shop) [:attrs :href]))
+     :shop-rep      (-> rep
+                        single-content
+                        parse-rep)
+     :quantity      (-> qty
+                        single-content
+                        Integer/parseInt)
+     :unit-price    (-> price
+                        single-content
+                        parse-unit-price)}))
 
 (defn lots
   [lot-list-page]
@@ -192,7 +206,7 @@
         (comp
          (remove #(#{["Next"] ["Previous"]} (:content %)))
          anchor-hrefs
-         (map #(str "http://www.bricklink.com" %))))))
+         (map prefix-url)))))
 
 (defn lot-list-lots
   [first-page]
@@ -203,4 +217,44 @@
 (defn wanted-list-lots
   [wanted-list-id]
   (let [lot-list-first-pages (map #(parse-url %) (take 1 (lot-list-urls wanted-list-id)))
+        
+
+
         ]))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Store terms
+
+(defn gross-nested-table-successor-selector
+  [text-re]
+  ;; follow-adjacent selects the tr that follows the tr containing text-re
+  (s/follow-adjacent (s/and (s/child (s/tag :body) (s/tag :center) (s/tag :table) (s/tag :tbody) (s/tag :tr))
+                            (s/has-descendant (s/find-in-text text-re)))
+                     (s/tag :tr)))
+
+(defn terms-text
+  [terms-page]
+  (-> (s/select (s/descendant (gross-nested-table-successor-selector #"Store Terms & Conditions")
+                              (s/tag :font)) terms-page)
+      single-content))
+
+(defn shipping-text
+  [terms-page]
+  (-> (s/select (s/descendant (gross-nested-table-successor-selector #"Store Shipping Policy")
+                              (s/tag :font)) terms-page)
+      single-content))
+
+(defn store-terms
+  [store-username]
+  (let [framed-page (parse-url ((:store-page urls) store-username))
+        top-url     (-> (s/select (s/tag :frame) framed-page) first :attrs :src)
+        top-page    (parse-url (prefix-url top-url))
+        terms-url   (-> (s/select (s/and (s/tag :a)
+                                         (s/has-descendant (s/find-in-text #"Store Terms")))
+                                  top-page)
+                        first
+                        :attrs
+                        :href)
+        terms-page  (parse-url (prefix-url terms-url))]
+    {:store-terms     (terms-text terms-page)
+     :shipping-policy (shipping-text terms-page)}))
