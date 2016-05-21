@@ -184,27 +184,28 @@
         texts        (s/select (s/not (s/node-type :element)) available-in)
         qty          (find-by-label texts #"Qty")
         price        (find-by-label texts #"Each")]
-    {:name           (-> (s/select s/first-child description)
-                         single-content
-                         str/trim)
-     :min-buy        (-> (s/select (s/child (s/tag :font) (s/tag :font)) description)
-                         single-content
-                         parse-min-buy)
-     :store-username (-> store
-                         first
-                         :attrs
-                         :href
-                         parse-store-username)
-     :store-name     (-> store
-                         single-content)
-     :store-url      (prefix-url (get-in (first store) [:attrs :href]))
-     :store-rep      (-> rep
-                         single-content
-                         parse-rep)
-     :quantity       (-> qty
-                         parse-quantity)
-     :unit-price     (-> price
-                         parse-unit-price)}))
+    {:name            (-> (s/select s/first-child description)
+                          single-content
+                          str/trim)
+     :min-buy         (-> (s/select (s/child (s/tag :font) (s/tag :font)) description)
+                          single-content
+                          parse-min-buy)
+     :store-username  (-> store
+                          first
+                          :attrs
+                          :href
+                          parse-store-username)
+     :store-name      (-> store
+                          single-content)
+     :store-url       (prefix-url (get-in (first store) [:attrs :href]))
+     :store-rep       (-> rep
+                          single-content
+                          parse-rep)
+     :store-ship-cost 300
+     :quantity        (-> qty
+                          parse-quantity)
+     :unit-price      (-> price
+                          parse-unit-price)}))
 
 (defn lots
   [lot-list-page]
