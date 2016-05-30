@@ -10,13 +10,6 @@
   :db/unique :db.unique/identity
   :db.install/_attribute :db.part/db}
 
- {:db/id #db/id[:db.part/db]
-  :db/ident :part/list
-  :db/valueType :db.type/ref
-  :db/cardinality :db.cardinality/many
-  :db/doc "The lists that reference this part"
-  :db.install/_attribute :db.part/db}
-
  ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
  ;; Lots
 
@@ -101,6 +94,14 @@
   :db/ident :list/id
   :db/valueType :db.type/long
   :db/cardinality :db.cardinality/one
+  :db/unique :db.unique/identity
+  :db.install/_attribute :db.part/db}
+
+ {:db/id #db/id[:db.part/db]
+  :db/ident :list/part
+  :db/valueType :db.type/ref
+  :db/cardinality :db.cardinality/many
+  :db/doc "The list's parts"
   :db.install/_attribute :db.part/db}
 
  ]

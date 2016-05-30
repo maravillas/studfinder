@@ -6,13 +6,16 @@
   [db list-id lot]
   (print ".")
   @(d/transact db [{:db/id #db/id[:db.part/user]
-                    :part/name (:name lot)
-                    :part/list [list-id]}])
+                    :part/name (:name lot)}])
+  @(d/transact db [{:db/id #db/id[:db.part/user]
+                    :list/id list-id
+                    :list/part [[:part/name (:name lot)]]}])
   @(d/transact db [{:db/id #db/id[:db.part/user]
                     :store/name (:store-name lot)
                     :store/username (:store-username lot)
                     :store/url (:store-url lot)
-                    :store/rep (:store-rep lot)}])
+                    :store/rep (:store-rep lot)
+                    :store/ship-cost (:store-ship-cost lot)}])
   @(d/transact db [{:db/id #db/id[:db.part/user]
                     :lot/quantity (:quantity lot)
                     :lot/unit-price (:unit-price lot)

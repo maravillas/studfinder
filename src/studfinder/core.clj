@@ -2,7 +2,8 @@
   (:require [studfinder.db :as db]
             [studfinder.scrape :as scrape]
             [datomic.api :as d]
-            [environ.core :refer [env]]))
+            [environ.core :refer [env]]
+            [studfinder.ga :as ga]))
 
 (def uri "datomic:free://localhost:4334/studfinder")
 

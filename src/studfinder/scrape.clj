@@ -234,10 +234,11 @@
 
 (defn lot-list-lots
   [first-page]
-  (println "--- Collecting lots for a part ---")
   (let [lot-list-page-urls (lot-list-page-urls first-page)
-        lot-list-pages (map fetch lot-list-page-urls)]
-    (mapcat lots (conj lot-list-pages first-page))))
+        lot-list-pages (map fetch lot-list-page-urls)
+        lots (mapcat lots (conj lot-list-pages first-page))]
+    (println (str "--- Collected " (count lots) " lots for \"" (:name (first lots)) "\"---"))
+    lots))
 
 (defn wanted-list-lots
   [wanted-list-id]
