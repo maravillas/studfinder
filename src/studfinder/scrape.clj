@@ -2,7 +2,9 @@
   (:require [clj-http
              [client :as http]
              [cookies :as cookies]]
-            [clojure.string :as str]
+            [clojure
+             [string :as str]
+             [zip :as zip]]
             [environ.core :refer [env]]
             [hickory
              [convert :as convert]
@@ -50,6 +52,16 @@
 (defn prefix-url
   [s]
   (str "http://www.bricklink.com" (if (.startsWith s "/") s (str "/" s))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; Custom selectors
+
+(defn content-contains
+  [s]
+  (fn [hzip-loc]
+    (let [node (zip/node hzip-loc)]
+      (if (some #{s} (:content node))
+        hzip-loc))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; Login
@@ -176,13 +188,12 @@
         :else (recur (rest l) label)))
 
 (defn extract-lot
-  [lot-row]
+  [lot-row quantity]
   (let [description  (first (s/select (s/child (s/and (s/tag :td) (s/nth-child 3))) lot-row))
         available-in (first (s/select (s/child (s/and (s/tag :td) (s/nth-child 4)) (s/tag :font)) lot-row))
         store        (s/select (s/and (s/tag :a) (s/nth-child 2)) available-in)
         rep          (s/select (s/and (s/tag :a) (s/nth-child 3)) available-in)
         texts        (s/select (s/not (s/node-type :element)) available-in)
-        qty          (find-by-label texts #"Qty")
         price        (find-by-label texts #"Each")]
     {:name            (-> (s/select s/first-child description)
                           single-content
@@ -202,19 +213,26 @@
                           single-content
                           parse-rep)
      :store-ship-cost 300
-     :quantity        (-> qty
-                          parse-quantity)
+     :quantity        quantity
      :unit-price      (-> price
                           parse-unit-price)}))
 
 (defn lots
   [lot-list-page]
-  (let [rows (s/select (s/descendant (s/and (s/tag :table) (s/class "tb-main-content"))
-                                     (s/tag :table)
-                                     (s/tag :table)
-                                     (s/and (s/tag :tr) (s/class "tm")))
-                       lot-list-page)]
-    (map extract-lot rows)))
+  (let [rows     (s/select (s/descendant (s/and (s/tag :table) (s/class "tb-main-content"))
+                                         (s/tag :table)
+                                         (s/tag :table)
+                                         (s/and (s/tag :tr) (s/class "tm")))
+                           lot-list-page)
+        quantity-node (-> (s/select (s/descendant (content-contains "- Minimum Quantity ")
+                                                  (s/nth-child 3))
+                                    lot-list-page))
+        quantity (or (when (not (empty? quantity-node))
+                       (-> quantity-node
+                           single-content
+                           parse-quantity))
+                     1)]
+    (map #(extract-lot % quantity) rows)))
 
 (defn lot-list-page-urls
   [first-page]

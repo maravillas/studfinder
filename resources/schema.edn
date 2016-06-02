@@ -17,7 +17,7 @@
   :db/ident :lot/quantity
   :db/valueType :db.type/long
   :db/cardinality :db.cardinality/one
-  :db/doc "The quantity of a part available at a store"
+  :db/doc "The quantity of the part required from the store"
   :db.install/_attribute :db.part/db}
 
  {:db/id #db/id[:db.part/db]
