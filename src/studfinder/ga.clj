@@ -5,7 +5,7 @@
             [datomic.api :as d]))
 
 (defn gene
-  [[part [[_ quantity price part-name store-name store-url ship-cost]]]]
+  [[part quantity price part-name store-name store-url ship-cost :as g]]
   {:quantity quantity
    :unit-price price
    :part-name part-name
@@ -62,7 +62,10 @@
 
 (defn make-individuals
   [db lots n]
-  (repeatedly n (fn [] {:genome (into {} (map (fn [l] [(first l) (gene l)]) (sample-lots lots)))})))
+  (repeatedly n (fn [] {:genome (->> lots
+                                     sample-lots
+                                     (map (fn [[part vs]] [part (gene (first vs))]))
+                                     (into {}))})))
 
 (defn ensure-key-count
   [all-keys sampled-keys]
@@ -95,7 +98,7 @@
 
 (defn random-gene
   [db lots]
-  (gene (first (sample-lots lots))))
+  (gene (rand-nth lots)))
 
 (defn mutate
   [db lots {:keys [genome]} rate]
