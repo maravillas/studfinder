@@ -13,11 +13,19 @@
    :store-url store-url
    :ship-cost ship-cost})
 
-#_(defn format-individual
-    [db {:keys [genome fitness]}]
-    (let [part (d/pull '[:part/name] ())
-          store (d/pull '[*] (get-in ind [:genome :store]))]
-      ))
+(defn format-part
+  [{:keys [part-name quantity unit-price]}]
+  (str "  " part-name ": " quantity " @ $" (/ unit-price 100.0) " = $" (* quantity (/ unit-price 100.0)) "\n"))
+
+(defn format-individual
+  [{:keys [genome abs-fitness]}]
+  (apply str
+         (count genome) " stores totalling $" (/ abs-fitness 100.0) ":\n"
+         (map (fn [[[store-name url] parts]]
+                (str store-name " (" url "):\n"
+                     (apply str (map format-part parts))
+                     "\n"))
+              (group-by (juxt :store-name :store-url :ship-cost) (vals genome)))))
 
 (defn sample-lots
   [lots]
@@ -27,25 +35,27 @@
          [(vector ?quantity ?price ?part ?part-name ?store-name ?store-url ?ship-cost) ?combined]]
        lots))
 
-(defn make-individual
-  [db wanted-list-id]
-  (let [lots (sample-lots
-              (d/q '[:find ?quantity ?price ?part ?part-name ?store-name ?store-url ?ship-cost
-                     :in $ ?list-id
-                     :where
-                     [?list :list/id ?list-id]
-                     [?list :list/part ?part]
-                     [?part :part/name ?part-name]
-                     [?lot :lot/quantity ?quantity]
-                     [?lot :lot/unit-price ?price]
-                     [?lot :lot/part ?part]
-                     [?lot :lot/store ?store]
-                     [?store :store/name ?store-name]
-                     [?store :store/url ?store-url]
-                     [(get-else $ ?store :store/ship-cost 0) ?ship-cost]]
-                   (d/db db)
-                   wanted-list-id))]
-    {:genome (into {} (map (fn [l] [(first l) (gene l)]) lots))}))
+(defn make-individuals
+  [db wanted-list-id n]
+  (let [lots (d/q '[:find ?quantity ?price ?part ?part-name ?store-name ?store-url ?ship-cost
+                    :in $ ?list-id
+                    :where
+                    [?list :list/id ?list-id]
+                    [?list :list/part ?part]
+                    [?part :part/name ?part-name]
+                    [?lot :lot/part ?part]
+                    [?lot :lot/store ?store]
+                    [?store :store/rep ?rep]
+                    [(> ?rep 500)]
+                    [?lot :lot/quantity ?quantity]
+                    [?lot :lot/unit-price ?price]
+                    [?store :store/name ?store-name]
+                    [?store :store/url ?store-url]
+                    [(get-else $ ?store :store/ship-cost 0) ?ship-cost]]
+                  (d/db db)
+                  wanted-list-id)]
+    (repeatedly n
+                (fn [] {:genome (into {} (map (fn [l] [(first l) (gene l)]) (sample-lots lots)))}))))
 
 (defn ensure-key-count
   [all-keys sampled-keys]
@@ -84,10 +94,12 @@
      (d/q '[:find ?quantity ?price ?part ?part-name ?store-name ?store-url ?ship-cost
             :in $ ?part
             :where
-            [?lot :lot/quantity ?quantity]
-            [?lot :lot/unit-price ?price]
             [?lot :lot/part ?part]
             [?lot :lot/store ?store]
+            [?store :store/rep ?rep]
+            [(> ?rep 500)]
+            [?lot :lot/quantity ?quantity]
+            [?lot :lot/unit-price ?price]
             [?part :part/name ?part-name]
             [?store :store/name ?store-name]
             [?store :store/url ?store-url]
@@ -103,9 +115,15 @@
 
 (defn fitness
   [{:keys [genome]}]
-  (apply +
-         (map #(+ (* (:unit-price %) (:quantity %)) (:ship-cost %))
-              (vals genome))))
+  (let [part-cost (->> (vals genome)
+                       (map #(* (:unit-price %) (:quantity %)))
+                       (apply +))
+        shipping-cost (->> (vals genome)
+                           (map #(select-keys % [:ship-cost :store-name]))
+                           (into #{})
+                           (map :ship-cost)
+                           (apply +))]
+    (+ part-cost shipping-cost)))
 
 (defn evaluate-fitness
   [inds]
@@ -134,10 +152,9 @@
 (defn evolve
   [db list-id pop-size mutation-rate generations]
   (loop [gen 0
-         inds (repeatedly pop-size #(make-individual db list-id))]
+         inds (make-individuals db list-id pop-size)]
     (println "Generation" gen)
     (let [with-fitness (evaluate-fitness inds)
-          _ (println with-fitness)
           next-inds (mapcat (fn [_] (make-children db with-fitness mutation-rate)) (range (/ pop-size 2)))]
       (if (< (inc gen) generations)
         (recur (inc gen) next-inds)
