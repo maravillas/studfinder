@@ -5,7 +5,7 @@
             [datomic.api :as d]))
 
 (defn gene
-  [[part [[quantity price _ part-name store-name store-url ship-cost]]]]
+  [[part [[_ quantity price part-name store-name store-url ship-cost]]]]
   {:quantity quantity
    :unit-price price
    :part-name part-name
@@ -19,43 +19,50 @@
 
 (defn format-individual
   [{:keys [genome abs-fitness]}]
-  (apply str
-         (count genome) " stores totalling $" (/ abs-fitness 100.0) ":\n"
-         (map (fn [[[store-name url] parts]]
-                (str store-name " (" url "):\n"
-                     (apply str (map format-part parts))
-                     "\n"))
-              (group-by (juxt :store-name :store-url :ship-cost) (vals genome)))))
+  (let [stores (group-by (juxt :store-name :store-url :ship-cost) (vals genome))]
+    (apply str
+           (count stores) " stores totalling $" (/ abs-fitness 100.0) ":\n"
+           (map (fn [[[store-name url] parts]]
+                  (str store-name " (" url "):\n"
+                       (apply str (map format-part parts))
+                       "\n"))
+                stores))))
 
 (defn sample-lots
   [lots]
   (d/q '[:find ?part (sample 1 ?combined)
          :where
-         [?quantity ?price ?part ?part-name ?store-name ?store-url ?ship-cost]
-         [(vector ?quantity ?price ?part ?part-name ?store-name ?store-url ?ship-cost) ?combined]]
+         [?part ?quantity ?price ?part-name ?store-name ?store-url ?ship-cost]
+         [(vector ?part ?quantity ?price ?part-name ?store-name ?store-url ?ship-cost) ?combined]]
        lots))
 
+(defn lots-for-list
+  [db wanted-list-id]
+  (d/q '[:find ?part ?quantity ?price ?part-name ?store-name ?store-url ?ship-cost
+         :in $ ?list-id
+         :where
+         [?list :list/id ?list-id]
+         [?list :list/part ?part]
+         [?part :part/name ?part-name]
+         [?lot :lot/part ?part]
+         [?lot :lot/store ?store]
+         [?store :store/rep ?rep]
+         [(> ?rep 500)]
+         [?lot :lot/quantity ?quantity]
+         [?lot :lot/unit-price ?price]
+         [?store :store/name ?store-name]
+         [?store :store/url ?store-url]
+         [(get-else $ ?store :store/ship-cost 0) ?ship-cost]]
+       (d/db db)
+       wanted-list-id))
+
+(defn group-lots-by-part
+  [lots]
+  (group-by first lots))
+
 (defn make-individuals
-  [db wanted-list-id n]
-  (let [lots (d/q '[:find ?quantity ?price ?part ?part-name ?store-name ?store-url ?ship-cost
-                    :in $ ?list-id
-                    :where
-                    [?list :list/id ?list-id]
-                    [?list :list/part ?part]
-                    [?part :part/name ?part-name]
-                    [?lot :lot/part ?part]
-                    [?lot :lot/store ?store]
-                    [?store :store/rep ?rep]
-                    [(> ?rep 500)]
-                    [?lot :lot/quantity ?quantity]
-                    [?lot :lot/unit-price ?price]
-                    [?store :store/name ?store-name]
-                    [?store :store/url ?store-url]
-                    [(get-else $ ?store :store/ship-cost 0) ?ship-cost]]
-                  (d/db db)
-                  wanted-list-id)]
-    (repeatedly n
-                (fn [] {:genome (into {} (map (fn [l] [(first l) (gene l)]) (sample-lots lots)))}))))
+  [db lots n]
+  (repeatedly n (fn [] {:genome (into {} (map (fn [l] [(first l) (gene l)]) (sample-lots lots)))})))
 
 (defn ensure-key-count
   [all-keys sampled-keys]
@@ -87,31 +94,15 @@
      {:genome (merge genome1 genome2-genes)}]))
 
 (defn random-gene
-  [db part]
-  (gene
-   (first
-    (sample-lots
-     (d/q '[:find ?quantity ?price ?part ?part-name ?store-name ?store-url ?ship-cost
-            :in $ ?part
-            :where
-            [?lot :lot/part ?part]
-            [?lot :lot/store ?store]
-            [?store :store/rep ?rep]
-            [(> ?rep 500)]
-            [?lot :lot/quantity ?quantity]
-            [?lot :lot/unit-price ?price]
-            [?part :part/name ?part-name]
-            [?store :store/name ?store-name]
-            [?store :store/url ?store-url]
-            [(get-else $ ?store :store/ship-cost 0) ?ship-cost]]
-          (d/db db)
-          part)))))
+  [db lots]
+  (gene (first (sample-lots lots))))
 
 (defn mutate
-  [db {:keys [genome]} rate]
-  {:post [(= (set (keys (:genome %))) (set (keys genome)))]}
+  [db lots {:keys [genome]} rate]
+  {:pre [(= (set (keys lots)) (set (keys genome)))]
+   :post [(= (set (keys (:genome %))) (set (keys genome)))]}
   (let [ks (random-sample rate (keys genome))]
-    {:genome (merge genome (into {} (map (fn [k] [k (random-gene db k)]) ks)))}))
+    {:genome (merge genome (into {} (map (fn [k] [k (random-gene db (get lots k))]) ks)))}))
 
 (defn fitness
   [{:keys [genome]}]
@@ -141,21 +132,27 @@
       (first inds)))
 
 (defn make-children
-  [db inds mutation-rate]
+  [db lots inds mutation-rate]
   (let [p1 (tournament-select inds 2)
         p2 (tournament-select inds 2)
         [c1 c2] (crossover p1 p2)
-        c1 (mutate db c1 mutation-rate)
-        c2 (mutate db c2 mutation-rate)]
+        c1 (mutate db lots c1 mutation-rate)
+        c2 (mutate db lots c2 mutation-rate)]
     [c1 c2]))
 
 (defn evolve
   [db list-id pop-size mutation-rate generations]
-  (loop [gen 0
-         inds (make-individuals db list-id pop-size)]
-    (println "Generation" gen)
-    (let [with-fitness (evaluate-fitness inds)
-          next-inds (mapcat (fn [_] (make-children db with-fitness mutation-rate)) (range (/ pop-size 2)))]
-      (if (< (inc gen) generations)
-        (recur (inc gen) next-inds)
-        (first (sort-by :fitness (evaluate-fitness next-inds)))))))
+  (let [all-lots (lots-for-list db list-id)
+        lots-by-part (group-lots-by-part all-lots)]
+    (loop [gen 0
+           inds (make-individuals db all-lots pop-size)]
+      (println "Generation" gen)
+      (let [with-fitness (evaluate-fitness inds)
+            next-inds (mapcat (fn [_] (make-children db lots-by-part with-fitness mutation-rate)) (range (/ pop-size 2)))]
+        (if (< (inc gen) generations)
+          (recur (inc gen) next-inds)
+          (let [winnar (first (sort-by :fitness (evaluate-fitness next-inds)))]
+            (print (str "----------\n"
+                        (format-individual winnar)
+                        "----------\n"))
+            winnar))))))
