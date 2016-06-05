@@ -2,7 +2,8 @@
   (:require [clojure
              [pprint :as pprint :refer [pprint]]
              [set :as set]]
-            [datomic.api :as d]))
+            [datomic.api :as d])
+  (:import [java.util.Date]))
 
 (defn gene
   [[part quantity price part-name store-name store-url ship-cost :as g]]
@@ -97,15 +98,19 @@
      {:genome (merge genome1 genome2-genes)}]))
 
 (defn random-gene
-  [db lots]
+  [lots]
   (gene (rand-nth lots)))
 
 (defn mutate
-  [db lots {:keys [genome]} rate]
+  [lots {:keys [genome] :as ind} rate]
   {:pre [(= (set (keys lots)) (set (keys genome)))]
-   :post [(= (set (keys (:genome %))) (set (keys genome)))]}
-  (let [ks (random-sample rate (keys genome))]
-    {:genome (merge genome (into {} (map (fn [k] [k (random-gene db (get lots k))]) ks)))}))
+   :post [(nil? (println (set (keys (:genome %))) (set (keys genome))))
+          (= (set (keys (:genome %))) (set (keys genome)))]}
+  (let [ks (random-sample rate (keys genome))
+        new-genes (mapcat (fn [k] [k (random-gene (get lots k))]) ks)]
+    (if (empty? new-genes)
+      ind
+      (update-in ind [:genome] #(apply assoc % new-genes)))))
 
 (defn fitness
   [{:keys [genome]}]
@@ -135,12 +140,12 @@
       (first inds)))
 
 (defn make-children
-  [db lots inds mutation-rate]
+  [lots inds mutation-rate]
   (let [p1 (tournament-select inds 2)
         p2 (tournament-select inds 2)
         [c1 c2] (crossover p1 p2)
-        c1 (mutate db lots c1 mutation-rate)
-        c2 (mutate db lots c2 mutation-rate)]
+        c1 (mutate lots c1 mutation-rate)
+        c2 (mutate lots c2 mutation-rate)]
     [c1 c2]))
 
 (defn evolve
@@ -148,14 +153,17 @@
   (let [all-lots (lots-for-list db list-id)
         lots-by-part (group-lots-by-part all-lots)]
     (loop [gen 0
-           inds (make-individuals db all-lots pop-size)]
-      (println "Generation" gen)
+           inds (make-individuals db all-lots pop-size)
+           time (.getTime (java.util.Date.))]
+      (print "Generation" gen ": ")
       (let [with-fitness (evaluate-fitness inds)
-            next-inds (mapcat (fn [_] (make-children db lots-by-part with-fitness mutation-rate)) (range (/ pop-size 2)))]
+            next-inds (mapcat (fn [_] (make-children lots-by-part with-fitness mutation-rate)) (range (/ pop-size 2)))]
         (if (< (inc gen) generations)
-          (recur (inc gen) next-inds)
+          (do
+            (println (/ (- (.getTime (java.util.Date.)) time) 1000.0) "seconds")
+            (recur (inc gen) next-inds (.getTime (java.util.Date.))))
           (let [winnar (first (sort-by :fitness (evaluate-fitness next-inds)))]
-            (print (str "----------\n"
+            (print (str "\n----------\n"
                         (format-individual winnar)
                         "----------\n"))
             winnar))))))
