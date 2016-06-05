@@ -5,6 +5,10 @@
             [datomic.api :as d])
   (:import [java.util.Date]))
 
+(defn format-cents
+  [d]
+  (format "$%.2f" (/ d 100.0)))
+
 (defn gene
   [[part quantity price part-name store-name store-url ship-cost :as g]]
   {:quantity quantity
@@ -16,13 +20,15 @@
 
 (defn format-part
   [{:keys [part-name quantity unit-price]}]
-  (str "  " part-name ": " quantity " @ $" (/ unit-price 100.0) " = $" (* quantity (/ unit-price 100.0)) "\n"))
+  (str "  " part-name ": "
+       quantity " @ " (format-cents unit-price) " = "
+       (format-cents (* quantity unit-price)) "\n"))
 
 (defn format-individual
   [{:keys [genome abs-fitness]}]
   (let [stores (group-by (juxt :store-name :store-url :ship-cost) (vals genome))]
     (apply str
-           (count stores) " stores totalling $" (/ abs-fitness 100.0) ":\n"
+           (count stores) " stores totalling " (format-cents abs-fitness) ":\n"
            (map (fn [[[store-name url] parts]]
                   (str store-name " (" url "):\n"
                        (apply str (map format-part parts))
@@ -89,9 +95,8 @@
              (set (keys (:genome (second %)))))]}
   (let [genome1 (:genome ind1)
         genome2 (:genome ind2)
-        keys1 (set (random-sample 0.5 (keys genome1)))
-        keys1 (ensure-key-count (keys genome1) keys1)
-        keys2 (set/difference (set (keys genome1)) keys1)
+        pivot (rand-int (count genome1))
+        [keys1 keys2] (split-at pivot (sort (keys genome1)))
         genome1-genes (select-keys genome1 keys1)
         genome2-genes (select-keys genome2 keys2)]
     [{:genome (merge genome2 genome1-genes)}
@@ -104,8 +109,7 @@
 (defn mutate
   [lots {:keys [genome] :as ind} rate]
   {:pre [(= (set (keys lots)) (set (keys genome)))]
-   :post [(nil? (println (set (keys (:genome %))) (set (keys genome))))
-          (= (set (keys (:genome %))) (set (keys genome)))]}
+   :post [(= (set (keys (:genome %))) (set (keys genome)))]}
   (let [ks (random-sample rate (keys genome))
         new-genes (mapcat (fn [k] [k (random-gene (get lots k))]) ks)]
     (if (empty? new-genes)
@@ -155,12 +159,15 @@
     (loop [gen 0
            inds (make-individuals db all-lots pop-size)
            time (.getTime (java.util.Date.))]
-      (print "Generation" gen ": ")
+      (print (str "Generation " gen ": "))
       (let [with-fitness (evaluate-fitness inds)
+            winnar (first (sort-by :fitness with-fitness))
             next-inds (mapcat (fn [_] (make-children lots-by-part with-fitness mutation-rate)) (range (/ pop-size 2)))]
         (if (< (inc gen) generations)
           (do
-            (println (/ (- (.getTime (java.util.Date.)) time) 1000.0) "seconds")
+            (println (format "%.2f" (/ (- (.getTime (java.util.Date.)) time) 1000.0))
+                     "seconds, best"
+                     (:abs-fitness winnar))
             (recur (inc gen) next-inds (.getTime (java.util.Date.))))
           (let [winnar (first (sort-by :fitness (evaluate-fitness next-inds)))]
             (print (str "\n----------\n"
