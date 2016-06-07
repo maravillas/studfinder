@@ -10,10 +10,12 @@
   (format "$%.2f" (/ d 100.0)))
 
 (defn gene
-  [[part quantity price part-name store-name store-url ship-cost :as g]]
+  [[part quantity price part-name
+    store store-name store-url ship-cost :as g]]
   {:quantity quantity
    :unit-price price
    :part-name part-name
+   :store store
    :store-name store-name
    :store-url store-url
    :ship-cost ship-cost})
@@ -51,14 +53,20 @@
   [lots]
   (d/q '[:find ?part (sample 1 ?combined)
          :where
-         [?part ?quantity ?price ?part-name ?store-name ?store-url ?ship-cost]
-         [(vector ?part ?quantity ?price ?part-name ?store-name ?store-url ?ship-cost) ?combined]]
+         [?part ?quantity ?price ?part-name
+          ?store ?store-name ?store-url ?ship-cost]
+         [(vector ?part ?quantity ?price ?part-name
+                  ?store ?store-name ?store-url ?ship-cost) ?combined]]
        lots))
 
 (defn lots-for-list
   [db wanted-list-id]
-  (d/q '[:find ?part ?quantity ?price ?part-name ?store-name ?store-url ?ship-cost
+  (d/q '[:find
+         ?part ?quantity ?price ?part-name
+         ?store ?store-name ?store-url ?ship-cost
+
          :in $ ?list-id
+
          :where
          [?list :list/id ?list-id]
          [?list :list/part ?part]
@@ -78,6 +86,10 @@
 (defn group-lots-by-part
   [lots]
   (group-by first lots))
+
+(defn lots-for-individual
+  [ind]
+  )
 
 (defn make-individuals
   [db lots n]
