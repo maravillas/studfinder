@@ -24,11 +24,23 @@
        quantity " @ " (format-cents unit-price) " = "
        (format-cents (* quantity unit-price)) "\n"))
 
+(defn cost
+  [{:keys [genome]}]
+  (let [part-cost (->> (vals genome)
+                       (map #(* (:unit-price %) (:quantity %)))
+                       (apply +))
+        shipping-cost (->> (vals genome)
+                           (map #(select-keys % [:ship-cost :store-name]))
+                           (into #{})
+                           (map :ship-cost)
+                           (apply +))]
+    (+ part-cost shipping-cost)))
+
 (defn format-individual
-  [{:keys [genome abs-fitness]}]
+  [{:keys [genome] :as ind}]
   (let [stores (group-by (juxt :store-name :store-url :ship-cost) (vals genome))]
     (apply str
-           (count stores) " stores totalling " (format-cents abs-fitness) ":\n"
+           (count stores) " stores totalling " (format-cents (cost ind)) ":\n"
            (map (fn [[[store-name url] parts]]
                   (str store-name " (" url "):\n"
                        (apply str (map format-part parts))
@@ -121,12 +133,14 @@
   (let [part-cost (->> (vals genome)
                        (map #(* (:unit-price %) (:quantity %)))
                        (apply +))
-        shipping-cost (->> (vals genome)
-                           (map #(select-keys % [:ship-cost :store-name]))
-                           (into #{})
+        stores  (->> (vals genome)
+                     (map #(select-keys % [:ship-cost :store-name]))
+                     (into #{}))
+        shipping-cost (->> stores
                            (map :ship-cost)
                            (apply +))]
-    (+ part-cost shipping-cost)))
+    (* (+ part-cost shipping-cost)
+       (/ (count stores) 5))))
 
 (defn evaluate-fitness
   [inds]
@@ -158,7 +172,8 @@
         lots-by-part (group-lots-by-part all-lots)]
     (loop [gen 0
            inds (make-individuals db all-lots pop-size)
-           time (.getTime (java.util.Date.))]
+           time (.getTime (java.util.Date.))
+           best nil]
       (print (str "Generation " gen ": "))
       (let [with-fitness (evaluate-fitness inds)
             winnar (first (sort-by :fitness with-fitness))
@@ -166,11 +181,19 @@
         (if (< (inc gen) generations)
           (do
             (println (format "%.2f" (/ (- (.getTime (java.util.Date.)) time) 1000.0))
-                     "seconds, best"
-                     (:abs-fitness winnar))
-            (recur (inc gen) next-inds (.getTime (java.util.Date.))))
+                     "seconds, local best"
+                     (:abs-fitness winnar)
+                     "global best"
+                     (:abs-fitness best))
+            (recur (inc gen)
+                   next-inds
+                   (.getTime (java.util.Date.))
+                   (if (or (nil? best)
+                           (< (:abs-fitness winnar) (:abs-fitness best)))
+                     winnar
+                     best)))
           (let [winnar (first (sort-by :fitness (evaluate-fitness next-inds)))]
             (print (str "\n----------\n"
-                        (format-individual winnar)
+                        (format-individual best)
                         "----------\n"))
             winnar))))))
