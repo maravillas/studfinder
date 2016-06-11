@@ -60,36 +60,49 @@
        lots))
 
 (defn lots-for-list
-  [db wanted-list-id]
-  (d/q '[:find
-         ?part ?quantity ?price ?part-name
-         ?store ?store-name ?store-url ?ship-cost
-
-         :in $ ?list-id
-
-         :where
-         [?list :list/id ?list-id]
-         [?list :list/part ?part]
-         [?part :part/name ?part-name]
-         [?lot :lot/part ?part]
-         [?lot :lot/store ?store]
-         [?store :store/rep ?rep]
-         [(> ?rep 500)]
-         [?lot :lot/quantity ?quantity]
-         [?lot :lot/unit-price ?price]
-         [?store :store/name ?store-name]
-         [?store :store/url ?store-url]
-         [(get-else $ ?store :store/ship-cost 0) ?ship-cost]]
-       (d/db db)
-       wanted-list-id))
+  ([db wanted-list-id]
+   (lots-for-list db wanted-list-id nil))
+  ([db wanted-list-id stores]
+   (let [find  '[:find
+                 ?part ?quantity ?price ?part-name
+                 ?store ?store-name ?store-url ?ship-cost]
+         in    (if stores
+                 '[:in $ ?list-id [?stores ...]]
+                 '[:in $ ?list-id])
+         where '[:where
+                 [?list :list/id ?list-id]
+                 [?list :list/part ?part]
+                 [?part :part/name ?part-name]
+                 [?lot :lot/part ?part]
+                 [?lot :lot/store ?store]
+                 [?store :store/rep ?rep]
+                 [(> ?rep 500)]
+                 [?lot :lot/quantity ?quantity]
+                 [?lot :lot/unit-price ?price]
+                 [?store :store/name ?store-name]
+                 [?store :store/url ?store-url]
+                 [(get-else $ ?store :store/ship-cost 0) ?ship-cost]]]
+     (if stores
+       (d/q (concat find
+                    in
+                    where)
+            (d/db db)
+            wanted-list-id stores)
+       (d/q (concat find
+                    in
+                    where)
+            (d/db db)
+            wanted-list-id)))))
 
 (defn group-lots-by-part
   [lots]
   (group-by first lots))
 
 (defn lots-for-individual
-  [ind]
-  )
+  [db list-id {:keys [genome]}]
+  (lots-for-list db list-id (->> (vals genome)
+                                 (map :store)
+                                 (into #{}))))
 
 (defn make-individuals
   [db lots n]
@@ -152,7 +165,7 @@
                            (map :ship-cost)
                            (apply +))]
     (* (+ part-cost shipping-cost)
-       (/ (count stores) 5))))
+       (/ (count stores) 2))))
 
 (defn evaluate-fitness
   [inds]
@@ -179,33 +192,37 @@
     [c1 c2]))
 
 (defn evolve
-  [db list-id pop-size mutation-rate generations]
-  (let [all-lots (lots-for-list db list-id)
-        lots-by-part (group-lots-by-part all-lots)]
-    (loop [gen 0
-           inds (make-individuals db all-lots pop-size)
-           time (.getTime (java.util.Date.))
-           best nil]
-      (print (str "Generation " gen ": "))
-      (let [with-fitness (evaluate-fitness inds)
-            winnar (first (sort-by :fitness with-fitness))
-            next-inds (mapcat (fn [_] (make-children lots-by-part with-fitness mutation-rate)) (range (/ pop-size 2)))]
-        (if (< (inc gen) generations)
-          (do
-            (println (format "%.2f" (/ (- (.getTime (java.util.Date.)) time) 1000.0))
-                     "seconds, local best"
-                     (:abs-fitness winnar)
-                     "global best"
-                     (:abs-fitness best))
-            (recur (inc gen)
-                   next-inds
-                   (.getTime (java.util.Date.))
-                   (if (or (nil? best)
-                           (< (:abs-fitness winnar) (:abs-fitness best)))
-                     winnar
-                     best)))
-          (let [winnar (first (sort-by :fitness (evaluate-fitness next-inds)))]
-            (print (str "\n----------\n"
-                        (format-individual best)
-                        "----------\n"))
-            winnar))))))
+  ([db list-id pop-size mutation-rate generations]
+   (evolve db list-id pop-size mutation-rate generations nil))
+  ([db list-id pop-size mutation-rate generations archetype-individual]
+   (let [all-lots (if archetype-individual
+                    (lots-for-individual db list-id archetype-individual)
+                    (lots-for-list db list-id))
+         lots-by-part (group-lots-by-part all-lots)]
+     (loop [gen 0
+            inds (make-individuals db all-lots pop-size)
+            time (.getTime (java.util.Date.))
+            best nil]
+       (print (str "Generation " gen ": "))
+       (let [with-fitness (evaluate-fitness inds)
+             winnar (first (sort-by :fitness with-fitness))
+             next-inds (mapcat (fn [_] (make-children lots-by-part with-fitness mutation-rate)) (range (/ pop-size 2)))]
+         (if (< (inc gen) generations)
+           (do
+             (println (format "%.2f" (/ (- (.getTime (java.util.Date.)) time) 1000.0))
+                      "seconds, local best"
+                      (:abs-fitness winnar)
+                      "global best"
+                      (:abs-fitness best))
+             (recur (inc gen)
+                    next-inds
+                    (.getTime (java.util.Date.))
+                    (if (or (nil? best)
+                            (< (:abs-fitness winnar) (:abs-fitness best)))
+                      winnar
+                      best)))
+           (let [winnar (first (sort-by :fitness (evaluate-fitness next-inds)))]
+             (print (str "\n----------\n"
+                         (format-individual best)
+                         "----------\n"))
+             winnar)))))))
