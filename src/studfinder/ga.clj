@@ -116,7 +116,7 @@
   [all-keys sampled-keys]
   (cond (empty? sampled-keys)
         #{(first all-keys)}
-        
+
         (= (count sampled-keys) (count all-keys))
         (disj sampled-keys (first sampled-keys))
 
@@ -192,6 +192,19 @@
         c2 (mutate lots c2 mutation-rate)]
     [c1 c2]))
 
+(defn make-generation
+  [lots evaluated-inds mutation-rate]
+  (apply concat (pmap (fn [_] (make-children lots evaluated-inds mutation-rate))
+                      (range (/ (count evaluated-inds) 2)))))
+
+(defn summarize-gen
+  [gen start-time winnar best]
+  (println (format "Generation %d: %.2fs, local %7d, global %7d"
+                   gen
+                   (/ (- (.getTime (java.util.Date.)) start-time) 1000.0)
+                   (int (:abs-fitness winnar))
+                   (when (:abs-fitness best) (int (:abs-fitness best))))))
+
 (defn evolve
   ([db list-id pop-size mutation-rate generations]
    (evolve db list-id pop-size mutation-rate generations nil))
@@ -204,17 +217,12 @@
             inds (make-individuals db all-lots pop-size)
             time (.getTime (java.util.Date.))
             best nil]
-       (print (str "Generation " gen ": "))
-       (let [with-fitness (evaluate-fitness inds)
-             winnar (first (sort-by :fitness with-fitness))
-             next-inds (apply concat (pmap (fn [_] (make-children lots-by-part with-fitness mutation-rate)) (range (/ pop-size 2))))]
+       (let [evaluated-inds (evaluate-fitness inds)
+             winnar (first (sort-by :fitness evaluated-inds))
+             next-inds (make-generation lots-by-part evaluated-inds mutation-rate)]
          (if (< (inc gen) generations)
            (do
-             (println (format "%.2f" (/ (- (.getTime (java.util.Date.)) time) 1000.0))
-                      "seconds, local best"
-                      (:abs-fitness winnar)
-                      "global best"
-                      (:abs-fitness best))
+             (summarize-gen gen time winnar best)
              (recur (inc gen)
                     next-inds
                     (.getTime (java.util.Date.))
