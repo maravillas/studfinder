@@ -106,10 +106,11 @@
 
 (defn make-individuals
   [db lots n]
-  (repeatedly n (fn [] {:genome (->> lots
-                                     sample-lots
-                                     (map (fn [[part vs]] [part (gene (first vs))]))
-                                     (into {}))})))
+  (pmap (fn [_] {:genome (->> lots
+                              sample-lots
+                              (map (fn [[part vs]] [part (gene (first vs))]))
+                              (into {}))})
+        (range n)))
 
 (defn ensure-key-count
   [all-keys sampled-keys]
@@ -172,7 +173,7 @@
   (let [fitnesses (map fitness inds)
         sum (apply + fitnesses)
         normalized (map #(/ % sum) fitnesses)]
-    (map (fn [ind norm fit] (assoc ind :fitness norm :abs-fitness fit)) inds normalized fitnesses)))
+    (pmap (fn [ind norm fit] (assoc ind :fitness norm :abs-fitness fit)) inds normalized fitnesses)))
 
 (defn tournament-select
   [inds tourney-size]
@@ -206,7 +207,7 @@
        (print (str "Generation " gen ": "))
        (let [with-fitness (evaluate-fitness inds)
              winnar (first (sort-by :fitness with-fitness))
-             next-inds (mapcat (fn [_] (make-children lots-by-part with-fitness mutation-rate)) (range (/ pop-size 2)))]
+             next-inds (apply concat (pmap (fn [_] (make-children lots-by-part with-fitness mutation-rate)) (range (/ pop-size 2))))]
          (if (< (inc gen) generations)
            (do
              (println (format "%.2f" (/ (- (.getTime (java.util.Date.)) time) 1000.0))
