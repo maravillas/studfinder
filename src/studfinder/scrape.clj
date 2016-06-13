@@ -14,9 +14,9 @@
   (:import java.util.Date))
 
 (def urls
-  {:login          (constantly "https://www.bricklink.com/login.asp?logInTo=my.asp")
-   :wanted-detail  #(str "http://www.bricklink.com/wantedDetail.asp?catType=P&wantedMoreID=" %)
-   :store-page     #(str "https://www.bricklink.com/store.asp?p=" %)})
+  {:login          (constantly "https://www.bricklink.com/ajax/renovate/login.ajax")
+   :wanted-detail  #(str "http://www.bricklink.com/wantedDetail.asp?showOld=Y&catType=P&wantedMoreID=" %)
+   :store-page     #(str "https://www.bricklink.com/store.asp?showOld=Y&p=" %)})
 
 (def headers
   {"User-Agent" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.86 Safari/537.36"})
@@ -70,9 +70,10 @@
   [username password]
   (http/post ((:login urls)) {:debug true :debug-body true
                               :headers headers
-                              :form-params {:frmUsername username
-                                            :frmPassword password
-                                            :a "a"}
+                              :form-params {:userid username
+                                            :password password
+                                            :override false
+                                            :keepme_loggedin true}
                               :cookie-store cookie-store}))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
