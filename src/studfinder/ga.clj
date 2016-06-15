@@ -2,8 +2,10 @@
   (:require [clojure
              [pprint :as pprint :refer [pprint]]
              [set :as set]]
-            [datomic.api :as d])
-  (:import [java.util.Date]))
+            [datomic.api :as d]
+            [incanter
+             [charts :as charts]
+             [core :as incanter]]))
 
 (defn format-cents
   [d]
@@ -199,11 +201,13 @@
 
 (defn summarize-gen
   [gen start-time winnar best]
-  (println (format "Generation %d: %.2fs, local %7d, global %7d"
+  (println (format "Generation %d: %.2fs, local\t%7d\t, global %7d (%d, %s)"
                    gen
                    (/ (- (.getTime (java.util.Date.)) start-time) 1000.0)
                    (int (:abs-fitness winnar))
-                   (when (:abs-fitness best) (int (:abs-fitness best))))))
+                   (when (:abs-fitness best) (int (:abs-fitness best)))
+                   (count (set (map :store (vals (:genome best)))))
+                   (format-cents (cost best)))))
 
 (defn evolve
   ([db list-id pop-size mutation-rate generations]
@@ -214,16 +218,20 @@
                     (lots-for-list db list-id))
          lots-by-part (group-lots-by-part all-lots)]
      (loop [gen 0
+            log []
             inds (make-individuals db all-lots pop-size)
             time (.getTime (java.util.Date.))
             best nil]
        (let [evaluated-inds (evaluate-fitness inds)
              winnar (first (sort-by :fitness evaluated-inds))
              next-inds (make-generation lots-by-part evaluated-inds mutation-rate)]
-         (if (< (inc gen) generations)
+         (if (<= (inc gen) generations)
            (do
              (summarize-gen gen time winnar best)
              (recur (inc gen)
+                    (conj log {:abs-fitness (:abs-fitness winnar)
+                                   :cost (/ (cost winnar) 100.0)
+                                   :stores (count (set (map :store (vals (:genome winnar)))))})
                     next-inds
                     (.getTime (java.util.Date.))
                     (if (or (nil? best)
@@ -234,4 +242,29 @@
              (print (str "\n----------\n"
                          (format-individual best)
                          "----------\n"))
-             winnar)))))))
+             [winnar log])))))))
+
+(defn results-to-dataset
+  [results]
+  (incanter/to-dataset
+   (mapcat (fn [[k [winner log]]]
+             (map-indexed (fn [i g] (assoc g
+                                           :generation i
+                                           :experiment k)) log))
+           results)))
+
+(defn run-experiments
+  [db list-id generations settings]
+  (let [results (map (fn [{:keys [pop-size mutation-rate] :as s}]
+                       (println "Running experiment " s)
+                       [(str pop-size "/" mutation-rate) (evolve db list-id pop-size mutation-rate generations)])
+                     settings)]
+    results))
+
+(defn chart-experiments
+  [dataset]
+  (incanter/with-data dataset
+   (incanter/view (charts/line-chart :generation :cost
+                                     :group-by :experiment
+                                     :legend true))))
+
