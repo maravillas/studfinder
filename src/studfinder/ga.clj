@@ -156,8 +156,20 @@
       ind
       (update-in ind [:genome] #(apply assoc % new-genes)))))
 
+(defn log-store-weight
+  [c]
+  (Math/log10 c))
+
+(defn half-store-weight
+  [c]
+  (/ c 2))
+
+(defn fourth-store-weight
+  [c]
+  (/ c 4))
+
 (defn fitness
-  [{:keys [genome]}]
+  [store-weight-fn {:keys [genome]}]
   (let [part-cost (->> (vals genome)
                        (map #(* (:unit-price %) (:quantity %)))
                        (apply +))
@@ -168,11 +180,11 @@
                            (map :ship-cost)
                            (apply +))]
     (* (+ part-cost shipping-cost)
-       (/ (count stores) 2))))
+       (store-weight-fn (count stores)))))
 
 (defn evaluate-fitness
-  [inds]
-  (let [fitnesses (map fitness inds)
+  [inds store-weight-fn]
+  (let [fitnesses (map #(fitness store-weight-fn %) inds)
         sum (apply + fitnesses)
         normalized (map #(/ % sum) fitnesses)]
     (pmap (fn [ind norm fit] (assoc ind :fitness norm :abs-fitness fit)) inds normalized fitnesses)))
@@ -211,8 +223,10 @@
 
 (defn evolve
   ([db list-id pop-size mutation-rate generations]
-   (evolve db list-id pop-size mutation-rate generations nil))
-  ([db list-id pop-size mutation-rate generations archetype-individual]
+   (evolve db list-id pop-size mutation-rate generations #(/ % 2)))
+  ([db list-id pop-size mutation-rate generations store-weight-fn]
+   (evolve db list-id pop-size mutation-rate generations store-weight-fn nil))
+  ([db list-id pop-size mutation-rate generations store-weight-fn archetype-individual]
    (let [all-lots (if archetype-individual
                     (lots-for-individual db list-id archetype-individual)
                     (lots-for-list db list-id))
@@ -222,7 +236,7 @@
             inds (make-individuals db all-lots pop-size)
             time (.getTime (java.util.Date.))
             best nil]
-       (let [evaluated-inds (evaluate-fitness inds)
+       (let [evaluated-inds (evaluate-fitness inds store-weight-fn)
              winnar (first (sort-by :fitness evaluated-inds))
              next-inds (make-generation lots-by-part evaluated-inds mutation-rate)]
          (if (<= (inc gen) generations)
@@ -230,15 +244,15 @@
              (summarize-gen gen time winnar best)
              (recur (inc gen)
                     (conj log {:abs-fitness (:abs-fitness winnar)
-                                   :cost (/ (cost winnar) 100.0)
-                                   :stores (count (set (map :store (vals (:genome winnar)))))})
+                               :cost (/ (cost winnar) 100.0)
+                               :stores (count (set (map :store (vals (:genome winnar)))))})
                     next-inds
                     (.getTime (java.util.Date.))
                     (if (or (nil? best)
                             (< (:abs-fitness winnar) (:abs-fitness best)))
                       winnar
                       best)))
-           (let [winnar (first (sort-by :fitness (evaluate-fitness next-inds)))]
+           (let [winnar (first (sort-by :fitness (evaluate-fitness next-inds store-weight-fn)))]
              (print (str "\n----------\n"
                          (format-individual best)
                          "----------\n"))
@@ -255,9 +269,9 @@
 
 (defn run-experiments
   [db list-id generations settings]
-  (let [results (map (fn [{:keys [pop-size mutation-rate] :as s}]
+  (let [results (map (fn [{:keys [pop-size mutation-rate store-weight-fn name] :as s}]
                        (println "Running experiment " s)
-                       [(str pop-size "/" mutation-rate) (evolve db list-id pop-size mutation-rate generations)])
+                       [name (evolve db list-id pop-size mutation-rate generations store-weight-fn)])
                      settings)]
     results))
 
